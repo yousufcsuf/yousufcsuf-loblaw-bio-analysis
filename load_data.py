@@ -3,11 +3,10 @@ from pathlib import Path
 
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parent
 
+ROOT = Path(__file__).resolve().parent
 CSV_PATH = ROOT / "cell-count.csv"
 DB_PATH = ROOT / "clinical_trial.db"
-
 
 CELL_COLUMNS = [
     "b_cell",
@@ -17,46 +16,6 @@ CELL_COLUMNS = [
     "monocyte",
 ]
 
-def load_csv():
-    return pd.read_csv(CSV_PATH)
-
-def build_subjects(df):
-    subjects = df[
-        [
-            "project",
-            "subject",
-            "condition",
-            "age",
-            "sex",
-            "treatment",
-            "response",
-        ]
-    ].drop_duplicates()
-
-    return subjects
-
-def build_samples(df):
-    samples = df[
-        [
-            "sample",
-            "project",
-            "subject",
-            "sample_type",
-            "time_from_treatment_start",
-        ]
-    ].drop_duplicates()
-
-    return samples
-
-def build_cell_counts(df):
-    cell_counts = df.melt(
-        id_vars=["sample"],
-        value_vars=CELL_COLUMNS,
-        var_name="population",
-        value_name="count",
-    )
-
-    return cell_counts
 
 def create_schema(conn):
     conn.execute("PRAGMA foreign_keys = ON")
@@ -65,7 +24,8 @@ def create_schema(conn):
     conn.execute("DROP TABLE IF EXISTS samples")
     conn.execute("DROP TABLE IF EXISTS subjects")
 
-    conn.execute("""
+    conn.execute(
+        """
         CREATE TABLE subjects (
             project TEXT NOT NULL,
             subject TEXT NOT NULL,
@@ -76,9 +36,11 @@ def create_schema(conn):
             response TEXT,
             PRIMARY KEY (project, subject)
         )
-    """)
+        """
+    )
 
-    conn.execute("""
+    conn.execute(
+        """
         CREATE TABLE samples (
             sample TEXT PRIMARY KEY,
             project TEXT NOT NULL,
@@ -88,9 +50,11 @@ def create_schema(conn):
             FOREIGN KEY (project, subject)
                 REFERENCES subjects(project, subject)
         )
-    """)
+        """
+    )
 
-    conn.execute("""
+    conn.execute(
+        """
         CREATE TABLE cell_counts (
             sample TEXT NOT NULL,
             population TEXT NOT NULL,
@@ -99,70 +63,124 @@ def create_schema(conn):
             FOREIGN KEY (sample)
                 REFERENCES samples(sample)
         )
-    """)
-
-def load_tables(conn, subjects, samples, cell_counts):
-    subjects.to_sql(
-        "subjects",
-        conn,
-        if_exists="append",
-        index=False,
+        """
     )
 
-    samples.to_sql(
-        "samples",
-        conn,
-        if_exists="append",
-        index=False,
+
+def prepare_tables(df):
+    subjects = (
+        df[
+            [
+                "project",
+                "subject",
+                "condition",
+                "age",
+                "sex",
+                "treatment",
+                "response",
+            ]
+        ]
+        .drop_duplicates()
+        .reset_index(drop=True)
     )
 
-    cell_counts.to_sql(
-        "cell_counts",
-        conn,
-        if_exists="append",
-        index=False,
+    samples = (
+        df[
+            [
+                "sample",
+                "project",
+                "subject",
+                "sample_type",
+                "time_from_treatment_start",
+            ]
+        ]
+        .drop_duplicates()
+        .reset_index(drop=True)
     )
 
-def verify_database(conn):
-    for table in ["subjects", "samples", "cell_counts"]:
-        count = conn.execute(
-            f"SELECT COUNT(*) FROM {table}"
-        ).fetchone()[0]
+    cell_counts = df.melt(
+        id_vars=["sample"],
+        value_vars=CELL_COLUMNS,
+        var_name="population",
+        value_name="count",
+    )
 
-        print(f"{table}: {count}")
+    return subjects, samples, cell_counts
+
+
+def validate_data(df, subjects, samples, cell_counts):
+    if samples["sample"].duplicated().any():
+        raise ValueError("Duplicate sample IDs detected.")
+
+    if cell_counts["count"].isna().any():
+        raise ValueError("Missing cell counts detected.")
+
+    if (cell_counts["count"] < 0).any():
+        raise ValueError("Negative cell counts detected.")
+
+    expected_rows = len(samples) * len(CELL_COLUMNS)
+
+    if len(cell_counts) != expected_rows:
+        raise ValueError("Unexpected cell-count row count.")
+
+    print(f"CSV rows: {len(df)}")
+    print(f"Subjects: {len(subjects)}")
+    print(f"Samples: {len(samples)}")
+    print(f"Cell measurements: {len(cell_counts)}")
+
 
 def main():
-    df = load_csv()
+    if not CSV_PATH.exists():
+        raise FileNotFoundError(
+            f"{CSV_PATH.name} was not found."
+        )
 
-    subjects = build_subjects(df)
-    samples = build_samples(df)
-    cell_counts = build_cell_counts(df)
-    
+    df = pd.read_csv(CSV_PATH)
+
+    subjects, samples, cell_counts = prepare_tables(df)
+
+    validate_data(
+        df,
+        subjects,
+        samples,
+        cell_counts,
+    )
+
     conn = sqlite3.connect(DB_PATH)
 
     try:
         create_schema(conn)
 
-        load_tables(
+        subjects.to_sql(
+            "subjects",
             conn,
-            subjects,
-            samples,
-            cell_counts,
+            if_exists="append",
+            index=False,
+        )
+
+        samples.to_sql(
+            "samples",
+            conn,
+            if_exists="append",
+            index=False,
+        )
+
+        cell_counts.to_sql(
+            "cell_counts",
+            conn,
+            if_exists="append",
+            index=False,
         )
 
         conn.commit()
-        verify_database(conn)
-        violations = conn.execute( "PRAGMA foreign_key_check").fetchall()
 
-        print("Database created successfully.")
-        print("Subjects:", len(subjects))
-        print("Samples:", len(samples))
-        print("Cell counts:", len(cell_counts))
-        print("Foreign key violations:", violations)
+        print(
+            f"Database created successfully: {DB_PATH.name}"
+        )
+
     finally:
         conn.close()
 
 
 if __name__ == "__main__":
     main()
-
