@@ -14,7 +14,7 @@ It:
 - provides an interactive Streamlit dashboard
 
 Dashboard:  
-https://yousufcsuf-loblaw-bio-analysisgit-bfh87elce62omfczappffqk.streamlit.app/
+https://yousufcsuf-loblaw-bio-analysis-z5jyfy2c5l9rfqkjfwocyo.streamlit.app/
 
 ---
 
